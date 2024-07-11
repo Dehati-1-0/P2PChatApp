@@ -1,5 +1,6 @@
 package com.example.p2pchatapp
 
+import android.net.wifi.WifiManager
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -7,7 +8,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -51,12 +51,13 @@ fun ChatScreen(serverIp: String, serverPort: Int, modifier: Modifier = Modifier)
     val scope = rememberCoroutineScope()
     var discoveredDevices by remember { mutableStateOf(listOf<String>()) }
     var selectedDevice by remember { mutableStateOf(serverIp) }
+    var showDropdown by remember { mutableStateOf(false) }
 
     Column(modifier = modifier.padding(16.dp)) {
-        OutlinedTextField(
+        TextField(
             value = message,
             onValueChange = { message = it },
-            label = "Enter message",
+            label = { Text("Enter message") },
             modifier = Modifier.fillMaxWidth()
         )
         Spacer(modifier = Modifier.height(8.dp))
@@ -89,6 +90,7 @@ fun ChatScreen(serverIp: String, serverPort: Int, modifier: Modifier = Modifier)
                     discoverDevices { devices ->
                         scope.launch {
                             discoveredDevices = devices
+                            showDropdown = true
                         }
                     }
                 }
@@ -98,12 +100,15 @@ fun ChatScreen(serverIp: String, serverPort: Int, modifier: Modifier = Modifier)
         }
         Spacer(modifier = Modifier.height(16.dp))
 
-        LazyColumn {
-            items(discoveredDevices) { device ->
-                Button(onClick = {
-                    selectedDevice = device
-                }) {
-                    Text(device)
+        if (showDropdown && discoveredDevices.isNotEmpty()) {
+            LazyColumn {
+                items(discoveredDevices.size) { index ->
+                    TextButton(onClick = {
+                        selectedDevice = discoveredDevices[index]
+                        showDropdown = false
+                    }) {
+                        Text(discoveredDevices[index])
+                    }
                 }
             }
         }
@@ -181,15 +186,24 @@ private fun startServer(port: Int, onMessageReceived: (String) -> Unit) {
 
 private fun discoverDevices(onDevicesDiscovered: (List<String>) -> Unit) {
     val devices = mutableListOf<String>()
-    val interfaces = NetworkInterface.getNetworkInterfaces()
-    for (networkInterface in interfaces) {
-        if (networkInterface.isLoopback || !networkInterface.isUp) continue
-        for (interfaceAddress in networkInterface.interfaceAddresses) {
-            val broadcast = interfaceAddress.broadcast ?: continue
-            val ip = interfaceAddress.address.hostAddress
-            devices.add(ip)
+    try {
+        val interfaces = NetworkInterface.getNetworkInterfaces()
+        while (interfaces.hasMoreElements()) {
+            val networkInterface = interfaces.nextElement()
+            if (networkInterface.isLoopback || !networkInterface.isUp) continue
+
+            networkInterface.interfaceAddresses.forEach { address ->
+                val broadcast = address.broadcast
+                if (broadcast != null) {
+                    val ip = broadcast.hostAddress
+                    devices.add(ip)
+                }
+            }
         }
+    } catch (e: Exception) {
+        Log.e("P2PChatApp", "Error discovering devices: ${e.message}")
     }
+
     onDevicesDiscovered(devices)
 }
 
