@@ -1,4 +1,3 @@
-//192.168.0.103
 package com.example.p2pchatapp
 
 import android.os.Bundle
@@ -7,6 +6,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -18,6 +19,7 @@ import kotlinx.coroutines.launch
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.PrintWriter
+import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 
@@ -47,12 +49,14 @@ fun ChatScreen(serverIp: String, serverPort: Int, modifier: Modifier = Modifier)
     var message by remember { mutableStateOf("") }
     var chatLog by remember { mutableStateOf("Chat Log:") }
     val scope = rememberCoroutineScope()
+    var discoveredDevices by remember { mutableStateOf(listOf<String>()) }
+    var selectedDevice by remember { mutableStateOf(serverIp) }
 
     Column(modifier = modifier.padding(16.dp)) {
-        TextField(
+        OutlinedTextField(
             value = message,
             onValueChange = { message = it },
-            label = { Text("Enter message") },
+            label = "Enter message",
             modifier = Modifier.fillMaxWidth()
         )
         Spacer(modifier = Modifier.height(8.dp))
@@ -64,7 +68,7 @@ fun ChatScreen(serverIp: String, serverPort: Int, modifier: Modifier = Modifier)
                 val currentMessage = message
                 if (currentMessage.isNotEmpty()) {
                     scope.launch(Dispatchers.IO) {
-                        sendMessage(currentMessage, serverIp, serverPort)
+                        sendMessage(currentMessage, selectedDevice, serverPort)
                         launch(Dispatchers.Main) {
                             message = "" // Clear the message input after ensuring it's sent
                         }
@@ -75,12 +79,35 @@ fun ChatScreen(serverIp: String, serverPort: Int, modifier: Modifier = Modifier)
             }
             Button(onClick = {
                 scope.launch(Dispatchers.IO) {
-                    sendPing(serverIp, serverPort)
+                    sendPing(selectedDevice, serverPort)
                 }
             }) {
                 Text("Ping")
             }
+            Button(onClick = {
+                scope.launch(Dispatchers.IO) {
+                    discoverDevices { devices ->
+                        scope.launch {
+                            discoveredDevices = devices
+                        }
+                    }
+                }
+            }) {
+                Text("Discover")
+            }
         }
+        Spacer(modifier = Modifier.height(16.dp))
+
+        LazyColumn {
+            items(discoveredDevices) { device ->
+                Button(onClick = {
+                    selectedDevice = device
+                }) {
+                    Text(device)
+                }
+            }
+        }
+
         Spacer(modifier = Modifier.height(16.dp))
         Text(chatLog, modifier = Modifier
             .fillMaxHeight()
@@ -150,6 +177,20 @@ private fun startServer(port: Int, onMessageReceived: (String) -> Unit) {
         e.printStackTrace()
         Log.e("P2PChatApp", "Error starting server: ${e.message}")
     }
+}
+
+private fun discoverDevices(onDevicesDiscovered: (List<String>) -> Unit) {
+    val devices = mutableListOf<String>()
+    val interfaces = NetworkInterface.getNetworkInterfaces()
+    for (networkInterface in interfaces) {
+        if (networkInterface.isLoopback || !networkInterface.isUp) continue
+        for (interfaceAddress in networkInterface.interfaceAddresses) {
+            val broadcast = interfaceAddress.broadcast ?: continue
+            val ip = interfaceAddress.address.hostAddress
+            devices.add(ip)
+        }
+    }
+    onDevicesDiscovered(devices)
 }
 
 @Preview(showBackground = true)
