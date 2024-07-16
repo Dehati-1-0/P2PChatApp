@@ -1,6 +1,5 @@
 package com.example.p2pchatapp
 
-import android.annotation.SuppressLint
 import android.net.wifi.WifiManager
 import android.os.Bundle
 import android.util.Log
@@ -43,12 +42,12 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@SuppressLint("MutableCollectionMutableState")
 @Composable
 fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = Modifier) {
     var message by remember { mutableStateOf("") }
     var chatLog by remember { mutableStateOf("Chat Log:") }
     var knownPeers by remember { mutableStateOf(mutableSetOf<String>()) }
+    var discoveredIps by remember { mutableStateOf(listOf<String>()) }
     val scope = rememberCoroutineScope()
 
     Column(modifier = modifier.padding(16.dp)) {
@@ -86,6 +85,19 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
                 }
             }) {
                 Text("Ping")
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Button(onClick = {
+            discoveredIps = knownPeers.toList()
+        }) {
+            Text("Discover")
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("Discovered IPs:", style = MaterialTheme.typography.bodySmall)
+        Column {
+            discoveredIps.forEach { ip ->
+                Text(ip)
             }
         }
         Spacer(modifier = Modifier.height(16.dp))
