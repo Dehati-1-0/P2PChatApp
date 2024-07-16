@@ -44,5 +44,5 @@ Ensure both devices or emulators are connected to the same Wi-Fi network for pro
 
 ## Developer
 
-This application was developed by Inuka Weerasekera.
+This application was developed by Group 12 (LVINSP).
    
