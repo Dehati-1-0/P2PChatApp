@@ -1,5 +1,6 @@
 package com.example.p2pchatapp
 
+import android.annotation.SuppressLint
 import android.net.wifi.WifiManager
 import android.os.Bundle
 import android.util.Log
@@ -42,11 +43,12 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@SuppressLint("MutableCollectionMutableState")
 @Composable
 fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = Modifier) {
     var message by remember { mutableStateOf("") }
     var chatLog by remember { mutableStateOf("Chat Log:") }
-    var serverIp by remember { mutableStateOf<String?>(null) }
+    var knownPeers by remember { mutableStateOf(mutableSetOf<String>()) }
     val scope = rememberCoroutineScope()
 
     Column(modifier = modifier.padding(16.dp)) {
@@ -63,9 +65,11 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
         ) {
             Button(onClick = {
                 val currentMessage = message
-                if (currentMessage.isNotEmpty() && serverIp != null) {
+                if (currentMessage.isNotEmpty()) {
                     scope.launch(Dispatchers.IO) {
-                        sendMessage(currentMessage, serverIp!!, serverPort)
+                        knownPeers.forEach { peerIp ->
+                            sendMessage(currentMessage, peerIp, serverPort)
+                        }
                         launch(Dispatchers.Main) {
                             message = "" // Clear the message input after ensuring it's sent
                         }
@@ -75,9 +79,9 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
                 Text("Send")
             }
             Button(onClick = {
-                if (serverIp != null) {
-                    scope.launch(Dispatchers.IO) {
-                        sendPing(serverIp!!, serverPort)
+                scope.launch(Dispatchers.IO) {
+                    knownPeers.forEach { peerIp ->
+                        sendPing(peerIp, serverPort)
                     }
                 }
             }) {
@@ -104,8 +108,10 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
         scope.launch(Dispatchers.IO) {
             if (wifiManager != null) {
                 listenForBroadcasts(wifiManager) { discoveredIp ->
-                    serverIp = discoveredIp
-                    Log.d("P2PChatApp", "Discovered peer IP: $discoveredIp")
+                    if (discoveredIp !in knownPeers) {
+                        knownPeers.add(discoveredIp)
+                        Log.d("P2PChatApp", "Discovered peer IP: $discoveredIp")
+                    }
                 }
             }
         }
