@@ -23,7 +23,7 @@ import java.net.Socket
 
 class MainActivity : ComponentActivity() {
     private val serverPort = 12345
-    private val serverIp = "192.168.0.103"
+    private val serverIp = "10.22.127.64"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
