@@ -1,8 +1,5 @@
 package com.example.p2pchatapp
 
-import android.annotation.SuppressLint
-import android.content.Context
-import android.content.Intent
 import android.net.wifi.WifiManager
 import android.os.Bundle
 import android.util.Log
@@ -10,11 +7,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.p2pchatapp.ui.theme.P2PChatAppTheme
@@ -27,16 +22,18 @@ import java.net.*
 
 class MainActivity : ComponentActivity() {
     private val serverPort = 12345
+    private lateinit var wifiManager: WifiManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        wifiManager = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
         enableEdgeToEdge()
-        startService(Intent(this, BroadcastService::class.java))
         setContent {
             P2PChatAppTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     ChatScreen(
                         serverPort = serverPort,
+                        wifiManager = wifiManager,
                         modifier = Modifier.padding(innerPadding)
                     )
                 }
@@ -45,16 +42,12 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@SuppressLint("DefaultLocale")
 @Composable
-fun ChatScreen(serverPort: Int, modifier: Modifier = Modifier) {
+fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = Modifier) {
     var message by remember { mutableStateOf("") }
     var chatLog by remember { mutableStateOf("Chat Log:") }
+    var serverIp by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    var discoveredDevices by remember { mutableStateOf(listOf<String>()) }
-    var selectedDevice by remember { mutableStateOf("") }
-    var showDropdown by remember { mutableStateOf(false) }
-    val context = LocalContext.current
 
     Column(modifier = modifier.padding(16.dp)) {
         TextField(
@@ -70,9 +63,9 @@ fun ChatScreen(serverPort: Int, modifier: Modifier = Modifier) {
         ) {
             Button(onClick = {
                 val currentMessage = message
-                if (currentMessage.isNotEmpty() && selectedDevice.isNotEmpty()) {
+                if (currentMessage.isNotEmpty() && serverIp != null) {
                     scope.launch(Dispatchers.IO) {
-                        sendMessage(currentMessage, selectedDevice, serverPort)
+                        sendMessage(currentMessage, serverIp!!, serverPort)
                         launch(Dispatchers.Main) {
                             message = "" // Clear the message input after ensuring it's sent
                         }
@@ -82,59 +75,15 @@ fun ChatScreen(serverPort: Int, modifier: Modifier = Modifier) {
                 Text("Send")
             }
             Button(onClick = {
-                if (selectedDevice.isNotEmpty()) {
+                if (serverIp != null) {
                     scope.launch(Dispatchers.IO) {
-                        sendPing(selectedDevice, serverPort)
+                        sendPing(serverIp!!, serverPort)
                     }
                 }
             }) {
                 Text("Ping")
             }
-            Button(onClick = {
-                scope.launch(Dispatchers.IO) {
-                    discoverDevices(context) { devices ->
-                        scope.launch {
-                            discoveredDevices = devices
-                            showDropdown = true
-                        }
-                    }
-                }
-            }) {
-                Text("Discover")
-            }
-            Button(onClick = {
-                val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-                val ipAddress = wifiManager.connectionInfo.ipAddress
-                val formattedIpAddress = String.format(
-                    "%d.%d.%d.%d",
-                    (ipAddress and 0xff),
-                    (ipAddress shr 8 and 0xff),
-                    (ipAddress shr 16 and 0xff),
-                    (ipAddress shr 24 and 0xff)
-                )
-                scope.launch {
-                    discoveredDevices = listOf(formattedIpAddress)
-                    showDropdown = true
-                }
-            }) {
-                Text("Show IP")
-            }
         }
-        Spacer(modifier = Modifier.height(16.dp))
-
-        if (showDropdown && discoveredDevices.isNotEmpty()) {
-            LazyColumn {
-                items(discoveredDevices.size) { index ->
-                    TextButton(onClick = {
-                        selectedDevice = discoveredDevices[index]
-                        showDropdown = false
-                    }) {
-                        Text(discoveredDevices[index])
-                    }
-                }
-            }
-        }
-
         Spacer(modifier = Modifier.height(16.dp))
         Text(chatLog, modifier = Modifier
             .fillMaxHeight()
@@ -146,6 +95,17 @@ fun ChatScreen(serverPort: Int, modifier: Modifier = Modifier) {
             startServer(serverPort) { newMessage ->
                 scope.launch {
                     chatLog = "$chatLog\n$newMessage" // Update chatLog with new message
+                }
+            }
+        }
+        scope.launch(Dispatchers.IO) {
+            broadcastIp(serverPort)
+        }
+        scope.launch(Dispatchers.IO) {
+            if (wifiManager != null) {
+                listenForBroadcasts(wifiManager) { discoveredIp ->
+                    serverIp = discoveredIp
+                    Log.d("P2PChatApp", "Discovered peer IP: $discoveredIp")
                 }
             }
         }
@@ -206,63 +166,72 @@ private fun startServer(port: Int, onMessageReceived: (String) -> Unit) {
     }
 }
 
-private fun discoverDevices(context: Context, onDevicesDiscovered: (List<String>) -> Unit) {
-    val devices = mutableListOf<String>()
-    val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-    val multicastLock = wifiManager.createMulticastLock("multicastLock").apply { acquire() }
+private fun broadcastIp(port: Int) {
     try {
-        DatagramSocket().use { socket ->
-            socket.broadcast = true
-            val sendData = "DISCOVER_REQUEST".toByteArray()
-            socket.send(DatagramPacket(sendData, sendData.size, InetAddress.getByName("230.0.0.1"), 4446))
-            val receiveData = ByteArray(1024)
-            val receivePacket = DatagramPacket(receiveData, receiveData.size)
-            socket.soTimeout = 10000 // 10-second timeout
-
-            while (true) {
-                try {
-                    socket.receive(receivePacket)
-                    val ip = receivePacket.address.hostAddress
-                    if (ip != getLocalIpAddress() && ip !in devices) {
-                        devices.add(ip)
-                    }
-                } catch (e: SocketTimeoutException) {
-                    break // Exit the loop if timeout occurs
-                }
-            }
+        val broadcastAddress = InetAddress.getByName("255.255.255.255")
+        val socket = DatagramSocket()
+        val localIpAddress = getLocalIpAddress() ?: return
+        val message = "DISCOVER:$localIpAddress"
+        val packet = DatagramPacket(message.toByteArray(), message.length, broadcastAddress, port)
+        while (true) {
+            socket.send(packet)
+            Thread.sleep(5000) // Broadcast every 5 seconds
         }
     } catch (e: Exception) {
-        Log.e("P2PChatApp", "Error discovering devices: ${e.message}")
-    } finally {
-        multicastLock.release()
-        onDevicesDiscovered(devices)
+        e.printStackTrace()
+        Log.e("P2PChatApp", "Error broadcasting IP: ${e.message}")
     }
 }
 
-private fun getLocalIpAddress(): String {
+private fun listenForBroadcasts(wifiManager: WifiManager, onIpDiscovered: (String) -> Unit) {
     try {
-        val interfaces = NetworkInterface.getNetworkInterfaces()
-        while (interfaces.hasMoreElements()) {
-            val networkInterface = interfaces.nextElement()
-            if (networkInterface.isLoopback || !networkInterface.isUp) continue
-
-            networkInterface.interfaceAddresses.forEach { address ->
-                val ip = address.address.hostAddress
-                if (ip != null && !ip.contains(":")) {
-                    return ip
+        val socket = DatagramSocket(12345, InetAddress.getByName("0.0.0.0"))
+        socket.broadcast = true
+        val buffer = ByteArray(1024)
+        val localIpAddress = getLocalIpAddress() ?: return
+        wifiManager.createMulticastLock("p2pchatapp").apply {
+            setReferenceCounted(true)
+            acquire()
+        }
+        while (true) {
+            val packet = DatagramPacket(buffer, buffer.size)
+            socket.receive(packet)
+            val message = String(packet.data, 0, packet.length)
+            if (message.startsWith("DISCOVER:")) {
+                val ip = message.substringAfter("DISCOVER:")
+                if (ip != localIpAddress) {
+                    onIpDiscovered(ip)
                 }
             }
         }
     } catch (e: Exception) {
+        e.printStackTrace()
+        Log.e("P2PChatApp", "Error listening for broadcasts: ${e.message}")
+    }
+}
+
+private fun getLocalIpAddress(): String? {
+    try {
+        val interfaces = NetworkInterface.getNetworkInterfaces()
+        for (networkInterface in interfaces) {
+            val addresses = networkInterface.inetAddresses
+            for (address in addresses) {
+                if (!address.isLoopbackAddress && address is Inet4Address) {
+                    return address.hostAddress
+                }
+            }
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
         Log.e("P2PChatApp", "Error getting local IP address: ${e.message}")
     }
-    return ""
+    return null
 }
 
 @Preview(showBackground = true)
 @Composable
 fun ChatScreenPreview() {
     P2PChatAppTheme {
-        ChatScreen(serverPort = 12345) // This port is just for preview purposes
+        ChatScreen(serverPort = 12345, wifiManager = null) // This IP is just for preview purposes
     }
 }

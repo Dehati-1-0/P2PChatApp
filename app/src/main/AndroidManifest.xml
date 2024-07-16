@@ -3,6 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     package="com.example.p2pchatapp">
 
+    <!-- Permissions for network and Wi-Fi access -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -23,6 +24,7 @@
         android:theme="@style/Theme.P2PChatApp"
         tools:targetApi="31">
 
+        <!-- Main activity declaration -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -33,9 +35,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <service android:name=".BroadcastService" />
-
     </application>
 
 </manifest>
