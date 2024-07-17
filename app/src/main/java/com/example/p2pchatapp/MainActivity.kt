@@ -1,6 +1,6 @@
-//192.168.0.103
 package com.example.p2pchatapp
 
+import android.net.wifi.WifiManager
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -18,22 +18,22 @@ import kotlinx.coroutines.launch
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.PrintWriter
-import java.net.ServerSocket
-import java.net.Socket
+import java.net.*
 
 class MainActivity : ComponentActivity() {
     private val serverPort = 12345
-    private val serverIp = "10.22.127.64"
+    private lateinit var wifiManager: WifiManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        wifiManager = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
         enableEdgeToEdge()
         setContent {
             P2PChatAppTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     ChatScreen(
-                        serverIp = serverIp,
                         serverPort = serverPort,
+                        wifiManager = wifiManager,
                         modifier = Modifier.padding(innerPadding)
                     )
                 }
@@ -43,9 +43,11 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun ChatScreen(serverIp: String, serverPort: Int, modifier: Modifier = Modifier) {
+fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = Modifier) {
     var message by remember { mutableStateOf("") }
     var chatLog by remember { mutableStateOf("Chat Log:") }
+    var knownPeers by remember { mutableStateOf(mutableSetOf<String>()) }
+    var discoveredIps by remember { mutableStateOf(listOf<String>()) }
     val scope = rememberCoroutineScope()
 
     Column(modifier = modifier.padding(16.dp)) {
@@ -64,7 +66,9 @@ fun ChatScreen(serverIp: String, serverPort: Int, modifier: Modifier = Modifier)
                 val currentMessage = message
                 if (currentMessage.isNotEmpty()) {
                     scope.launch(Dispatchers.IO) {
-                        sendMessage(currentMessage, serverIp, serverPort)
+                        knownPeers.forEach { peerIp ->
+                            sendMessage(currentMessage, peerIp, serverPort)
+                        }
                         launch(Dispatchers.Main) {
                             message = "" // Clear the message input after ensuring it's sent
                         }
@@ -75,10 +79,25 @@ fun ChatScreen(serverIp: String, serverPort: Int, modifier: Modifier = Modifier)
             }
             Button(onClick = {
                 scope.launch(Dispatchers.IO) {
-                    sendPing(serverIp, serverPort)
+                    knownPeers.forEach { peerIp ->
+                        sendPing(peerIp, serverPort)
+                    }
                 }
             }) {
                 Text("Ping")
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Button(onClick = {
+            discoveredIps = knownPeers.toList()
+        }) {
+            Text("Discover")
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("Discovered IPs:", style = MaterialTheme.typography.bodySmall)
+        Column {
+            discoveredIps.forEach { ip ->
+                Text(ip)
             }
         }
         Spacer(modifier = Modifier.height(16.dp))
@@ -92,6 +111,19 @@ fun ChatScreen(serverIp: String, serverPort: Int, modifier: Modifier = Modifier)
             startServer(serverPort) { newMessage ->
                 scope.launch {
                     chatLog = "$chatLog\n$newMessage" // Update chatLog with new message
+                }
+            }
+        }
+        scope.launch(Dispatchers.IO) {
+            broadcastIp(serverPort)
+        }
+        scope.launch(Dispatchers.IO) {
+            if (wifiManager != null) {
+                listenForBroadcasts(wifiManager) { discoveredIp ->
+                    if (discoveredIp !in knownPeers) {
+                        knownPeers.add(discoveredIp)
+                        Log.d("P2PChatApp", "Discovered peer IP: $discoveredIp")
+                    }
                 }
             }
         }
@@ -152,10 +184,72 @@ private fun startServer(port: Int, onMessageReceived: (String) -> Unit) {
     }
 }
 
+private fun broadcastIp(port: Int) {
+    try {
+        val broadcastAddress = InetAddress.getByName("255.255.255.255")
+        val socket = DatagramSocket()
+        val localIpAddress = getLocalIpAddress() ?: return
+        val message = "DISCOVER:$localIpAddress"
+        val packet = DatagramPacket(message.toByteArray(), message.length, broadcastAddress, port)
+        while (true) {
+            socket.send(packet)
+            Thread.sleep(5000) // Broadcast every 5 seconds
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+        Log.e("P2PChatApp", "Error broadcasting IP: ${e.message}")
+    }
+}
+
+private fun listenForBroadcasts(wifiManager: WifiManager, onIpDiscovered: (String) -> Unit) {
+    try {
+        val socket = DatagramSocket(12345, InetAddress.getByName("0.0.0.0"))
+        socket.broadcast = true
+        val buffer = ByteArray(1024)
+        val localIpAddress = getLocalIpAddress() ?: return
+        wifiManager.createMulticastLock("p2pchatapp").apply {
+            setReferenceCounted(true)
+            acquire()
+        }
+        while (true) {
+            val packet = DatagramPacket(buffer, buffer.size)
+            socket.receive(packet)
+            val message = String(packet.data, 0, packet.length)
+            if (message.startsWith("DISCOVER:")) {
+                val ip = message.substringAfter("DISCOVER:")
+                if (ip != localIpAddress) {
+                    onIpDiscovered(ip)
+                }
+            }
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+        Log.e("P2PChatApp", "Error listening for broadcasts: ${e.message}")
+    }
+}
+
+private fun getLocalIpAddress(): String? {
+    try {
+        val interfaces = NetworkInterface.getNetworkInterfaces()
+        for (networkInterface in interfaces) {
+            val addresses = networkInterface.inetAddresses
+            for (address in addresses) {
+                if (!address.isLoopbackAddress && address is Inet4Address) {
+                    return address.hostAddress
+                }
+            }
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+        Log.e("P2PChatApp", "Error getting local IP address: ${e.message}")
+    }
+    return null
+}
+
 @Preview(showBackground = true)
 @Composable
 fun ChatScreenPreview() {
     P2PChatAppTheme {
-        ChatScreen(serverIp = "127.0.0.1", serverPort = 12345) // This IP is just for preview purposes
+        ChatScreen(serverPort = 12345, wifiManager = null) // This IP is just for preview purposes
     }
 }
