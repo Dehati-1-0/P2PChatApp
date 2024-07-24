@@ -9,7 +9,7 @@
         android:id="@+id/editTextMessage"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="Enter message" />
+        android:hint="@string/enter_message" />
 
     <Button
         android:id="@+id/buttonSend"
@@ -17,7 +17,7 @@
         android:layout_height="wrap_content"
         android:layout_below="@id/editTextMessage"
         android:layout_alignParentEnd="true"
-        android:text="Send" />
+        android:text="@string/send" />
 
     <TextView
         android:id="@+id/textViewChat"
@@ -25,6 +25,6 @@
         android:layout_height="wrap_content"
         android:layout_below="@id/buttonSend"
         android:padding="16dp"
-        android:text="Chat"
+        android:text="@string/chat"
         android:textSize="16sp" />
 </RelativeLayout>

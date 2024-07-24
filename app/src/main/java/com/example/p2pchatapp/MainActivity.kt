@@ -1,5 +1,6 @@
 package com.example.p2pchatapp
 
+import android.annotation.SuppressLint
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
@@ -46,11 +47,12 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@SuppressLint("MutableCollectionMutableState")
 @Composable
 fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = Modifier) {
     var message by remember { mutableStateOf("") }
-    var chatLog by remember { mutableStateOf(mutableListOf<ChatMessage>()) }
-    var knownPeers by remember { mutableStateOf(ConcurrentHashMap<String, DiscoveredDevice>()) }
+    val chatLog by remember { mutableStateOf(mutableListOf<ChatMessage>()) }
+    val knownPeers by remember { mutableStateOf(ConcurrentHashMap<String, DiscoveredDevice>()) }
     var discoveredDevices by remember { mutableStateOf(listOf<DiscoveredDevice>()) }
     var selectedDevice by remember { mutableStateOf<DiscoveredDevice?>(null) }
     val scope = rememberCoroutineScope()
