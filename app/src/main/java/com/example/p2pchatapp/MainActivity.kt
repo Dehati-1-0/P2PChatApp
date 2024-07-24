@@ -47,7 +47,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = Modifier) {
     var message by remember { mutableStateOf("") }
-    var chatLog by remember { mutableStateOf("Chat Log:") }
+    var chatLogs by remember { mutableStateOf(mutableMapOf<String, String>()) }
     var knownPeers by remember { mutableStateOf(mutableSetOf<DiscoveredDevice>()) }
     var discoveredDevices by remember { mutableStateOf(listOf<DiscoveredDevice>()) }
     var selectedDevice by remember { mutableStateOf<DiscoveredDevice?>(null) }
@@ -73,6 +73,7 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
                             sendMessage(currentMessage, device.ip, serverPort)
                             launch(Dispatchers.Main) {
                                 message = "" // Clear the message input after ensuring it's sent
+                                updateChatLog(chatLogs, device.ip, "Me: $currentMessage")
                             }
                         }
                     }
@@ -105,6 +106,11 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
                         .fillMaxWidth()
                         .clickable {
                             selectedDevice = device
+                            // Switch chat log to the selected device's log
+                            chatLogs[device.ip]?.let {
+                                // Ensure chat log is updated on UI thread
+                                chatLogs = chatLogs.toMutableMap().apply { put(device.ip, it) }
+                            }
                         }
                         .padding(8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween
@@ -117,16 +123,17 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
             }
         }
         Spacer(modifier = Modifier.height(16.dp))
-        Text(chatLog, modifier = Modifier
+        Text(chatLogs[selectedDevice?.ip] ?: "Chat Log:", modifier = Modifier
             .fillMaxHeight()
             .padding(16.dp))
     }
 
     LaunchedEffect(Unit) {
         scope.launch(Dispatchers.IO) {
-            startServer(serverPort) { newMessage ->
+            startServer(serverPort) { ip, newMessage ->
                 scope.launch {
-                    chatLog = "$chatLog\n$newMessage" // Update chatLog with new message
+                    val sender = if (ip == selectedDevice?.ip) "Them: " else "Unknown: "
+                    updateChatLog(chatLogs, ip, "$sender$newMessage")
                 }
             }
         }
@@ -147,6 +154,10 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
             }
         }
     }
+}
+
+fun updateChatLog(chatLogs: MutableMap<String, String>, ip: String, newMessage: String) {
+    chatLogs[ip] = (chatLogs[ip] ?: "Chat Log:") + "\n$newMessage"
 }
 
 data class DiscoveredDevice(
@@ -186,17 +197,18 @@ private fun sendPing(serverIp: String, serverPort: Int) {
     }
 }
 
-private fun startServer(port: Int, onMessageReceived: (String) -> Unit) {
+private fun startServer(port: Int, onMessageReceived: (String, String) -> Unit) {
     try {
         Log.d("P2PChatApp", "Starting server on port $port")
         val serverSocket = ServerSocket(port)
         while (true) {
             val clientSocket = serverSocket.accept()
+            val clientIp = clientSocket.inetAddress.hostAddress
             val reader = BufferedReader(InputStreamReader(clientSocket.getInputStream()))
             val message = reader.readLine()
-            Log.d("P2PChatApp", "Received message: $message")
+            Log.d("P2PChatApp", "Received message from $clientIp: $message")
             if (message != null) {
-                onMessageReceived(message)
+                onMessageReceived(clientIp, message)
             } else {
                 Log.d("P2PChatApp", "Received empty message")
             }
