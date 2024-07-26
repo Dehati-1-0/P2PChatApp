@@ -51,8 +51,13 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = Modifier) {
     var message by remember { mutableStateOf("") }
+
+//     var chatLogs by remember { mutableStateOf(mutableMapOf<String, String>()) }
+//     var knownPeers by remember { mutableStateOf(mutableSetOf<DiscoveredDevice>()) }
+
     var chatLog by remember { mutableStateOf(mutableListOf<ChatMessage>()) }
     var knownPeers by remember { mutableStateOf(ConcurrentHashMap<String, DiscoveredDevice>()) }
+
     var discoveredDevices by remember { mutableStateOf(listOf<DiscoveredDevice>()) }
     var selectedDevice by remember { mutableStateOf<DiscoveredDevice?>(null) }
     val scope = rememberCoroutineScope()
@@ -78,6 +83,7 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
                             chatLog.add(chatMessage)
                             launch(Dispatchers.Main) {
                                 message = "" // Clear the message input after ensuring it's sent
+                                updateChatLog(chatLogs, device.ip, "Me: $currentMessage")
                             }
                             sendMessage(currentMessage, device.ip, serverPort) { success ->
                                 chatMessage.status = if (success) "delivered" else "failed"
@@ -113,6 +119,11 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
                         .fillMaxWidth()
                         .clickable {
                             selectedDevice = device
+                            // Switch chat log to the selected device's log
+                            chatLogs[device.ip]?.let {
+                                // Ensure chat log is updated on UI thread
+                                chatLogs = chatLogs.toMutableMap().apply { put(device.ip, it) }
+                            }
                         }
                         .padding(8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween
@@ -125,7 +136,11 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
             }
         }
         Spacer(modifier = Modifier.height(16.dp))
+
+//         Text(chatLogs[selectedDevice?.ip] ?: "Chat Log:", modifier = Modifier
+
         Column(modifier = Modifier
+
             .fillMaxHeight()
             .padding(16.dp)) {
             chatLog.forEach { chatMessage ->
@@ -145,9 +160,14 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
 
     LaunchedEffect(Unit) {
         scope.launch(Dispatchers.IO) {
-            startServer(serverPort) { newMessage ->
+            startServer(serverPort) { ip, newMessage ->
                 scope.launch {
+
+//                     val sender = if (ip == selectedDevice?.ip) "Them: " else "Unknown: "
+//                     updateChatLog(chatLogs, ip, "$sender$newMessage")
+=======
                     chatLog.add(ChatMessage("Friend", newMessage, false))
+
                 }
             }
         }
@@ -177,6 +197,10 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
             }
         }
     }
+}
+
+fun updateChatLog(chatLogs: MutableMap<String, String>, ip: String, newMessage: String) {
+    chatLogs[ip] = (chatLogs[ip] ?: "Chat Log:") + "\n$newMessage"
 }
 
 data class DiscoveredDevice(
@@ -238,6 +262,22 @@ private fun sendPing(serverIp: String, serverPort: Int) {
     }
 }
 
+
+// private fun startServer(port: Int, onMessageReceived: (String, String) -> Unit) {
+//     try {
+//         Log.d("P2PChatApp", "Starting server on port $port")
+//         val serverSocket = ServerSocket(port)
+//         while (true) {
+//             val clientSocket = serverSocket.accept()
+//             val clientIp = clientSocket.inetAddress.hostAddress
+//             val reader = BufferedReader(InputStreamReader(clientSocket.getInputStream()))
+//             val message = reader.readLine()
+//             Log.d("P2PChatApp", "Received message from $clientIp: $message")
+//             if (message != null) {
+//                 onMessageReceived(clientIp, message)
+//             } else {
+//                 Log.d("P2PChatApp", "Received empty message")
+
 private fun startServer(port: Int, onMessageReceived: (String) -> Unit) {
     Thread {
         try {
@@ -258,6 +298,7 @@ private fun startServer(port: Int, onMessageReceived: (String) -> Unit) {
                     Log.d("P2PChatApp", "Received empty message")
                 }
                 clientSocket.close()
+
             }
         } catch (e: Exception) {
             e.printStackTrace()
