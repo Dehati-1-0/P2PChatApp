@@ -98,12 +98,16 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
                 Text("Ping")
             }
         }
-        Spacer(modifier = Modifier.height(8.dp))
-        Button(onClick = {
-            discoveredDevices = knownPeers.values.toList()
-        }) {
-            Text("Discover")
-        }
+
+        //Here is the discover button which is not needed anymore
+//        Spacer(modifier = Modifier.height(8.dp))
+//        Button(onClick = {
+//            discoveredDevices = knownPeers.values.toList()
+//        }) {
+//            Text("Discover")
+//        }
+
+
         Spacer(modifier = Modifier.height(16.dp))
         Text("Discovered Devices:", style = MaterialTheme.typography.bodySmall)
         Column {
