@@ -23,11 +23,11 @@ P2PChatApp is a peer-to-peer chat application for Android that allows users to s
 To use P2PChatApp with two devices or emulators:
 
 1. **Open two instances of the project**:
-   - Open Android Studio and load the P2PChatApp project in two separate windows or instances.
+   - Open Android Studio and load the P2PChatApp project in two or more mobiles or instances.
 
 2. **Run the app on each device or emulator**:
    - Start one instance on Device A or Emulator A.
-   - Start the second instance on Device B or Emulator B.
+   - Start the second instance on Device B or Emulator B vice versa.
 
 3. **Configure devices for peer-to-peer communication**:
    - On Device A (acting as server), note its IP address from the Wi-Fi settings.

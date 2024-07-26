@@ -1,5 +1,6 @@
 package com.example.p2pchatapp
 
+import android.annotation.SuppressLint
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
@@ -21,6 +22,8 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.PrintWriter
 import java.net.*
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.concurrent.timer
 
 class MainActivity : ComponentActivity() {
     private val serverPort = 12345
@@ -44,11 +47,17 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@SuppressLint("MutableCollectionMutableState")
 @Composable
 fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = Modifier) {
     var message by remember { mutableStateOf("") }
-    var chatLogs by remember { mutableStateOf(mutableMapOf<String, String>()) }
-    var knownPeers by remember { mutableStateOf(mutableSetOf<DiscoveredDevice>()) }
+
+//     var chatLogs by remember { mutableStateOf(mutableMapOf<String, String>()) }
+//     var knownPeers by remember { mutableStateOf(mutableSetOf<DiscoveredDevice>()) }
+
+    var chatLog by remember { mutableStateOf(mutableListOf<ChatMessage>()) }
+    var knownPeers by remember { mutableStateOf(ConcurrentHashMap<String, DiscoveredDevice>()) }
+
     var discoveredDevices by remember { mutableStateOf(listOf<DiscoveredDevice>()) }
     var selectedDevice by remember { mutableStateOf<DiscoveredDevice?>(null) }
     val scope = rememberCoroutineScope()
@@ -70,10 +79,14 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
                 selectedDevice?.let { device ->
                     if (currentMessage.isNotEmpty()) {
                         scope.launch(Dispatchers.IO) {
-                            sendMessage(currentMessage, device.ip, serverPort)
+                            val chatMessage = ChatMessage("You", currentMessage, true, "sent")
+                            chatLog.add(chatMessage)
                             launch(Dispatchers.Main) {
                                 message = "" // Clear the message input after ensuring it's sent
                                 updateChatLog(chatLogs, device.ip, "Me: $currentMessage")
+                            }
+                            sendMessage(currentMessage, device.ip, serverPort) { success ->
+                                chatMessage.status = if (success) "delivered" else "failed"
                             }
                         }
                     }
@@ -83,7 +96,7 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
             }
             Button(onClick = {
                 scope.launch(Dispatchers.IO) {
-                    knownPeers.forEach { peer ->
+                    knownPeers.values.forEach { peer ->
                         sendPing(peer.ip, serverPort)
                     }
                 }
@@ -93,7 +106,7 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
         }
         Spacer(modifier = Modifier.height(8.dp))
         Button(onClick = {
-            discoveredDevices = knownPeers.map { it.copy() }
+            discoveredDevices = knownPeers.values.toList()
         }) {
             Text("Discover")
         }
@@ -123,17 +136,38 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
             }
         }
         Spacer(modifier = Modifier.height(16.dp))
-        Text(chatLogs[selectedDevice?.ip] ?: "Chat Log:", modifier = Modifier
+
+//         Text(chatLogs[selectedDevice?.ip] ?: "Chat Log:", modifier = Modifier
+
+        Column(modifier = Modifier
+
             .fillMaxHeight()
-            .padding(16.dp))
+            .padding(16.dp)) {
+            chatLog.forEach { chatMessage ->
+                val status = when (chatMessage.status) {
+                    "sent" -> "✓"
+                    "delivered" -> "✓✓"
+                    "failed" -> "✗"
+                    else -> ""
+                }
+                Text(
+                    text = "${chatMessage.sender}: ${chatMessage.content} $status",
+                    color = if (chatMessage.isSentByUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
+                )
+            }
+        }
     }
 
     LaunchedEffect(Unit) {
         scope.launch(Dispatchers.IO) {
             startServer(serverPort) { ip, newMessage ->
                 scope.launch {
-                    val sender = if (ip == selectedDevice?.ip) "Them: " else "Unknown: "
-                    updateChatLog(chatLogs, ip, "$sender$newMessage")
+
+//                     val sender = if (ip == selectedDevice?.ip) "Them: " else "Unknown: "
+//                     updateChatLog(chatLogs, ip, "$sender$newMessage")
+=======
+                    chatLog.add(ChatMessage("Friend", newMessage, false))
+
                 }
             }
         }
@@ -143,14 +177,23 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
         scope.launch(Dispatchers.IO) {
             if (wifiManager != null) {
                 listenForBroadcasts(wifiManager) { discoveredDevice ->
-                    if (!knownPeers.any { it.ip == discoveredDevice.ip }) {
-                        knownPeers.add(discoveredDevice)
-                        Log.d("P2PChatApp", "Discovered peer IP: ${discoveredDevice.ip}, Model: ${discoveredDevice.modelName}")
-                    }
+                    knownPeers[discoveredDevice.ip] = discoveredDevice
                     scope.launch(Dispatchers.Main) {
-                        discoveredDevices = knownPeers.toList()
+                        discoveredDevices = knownPeers.values.toList()
                     }
                 }
+            }
+        }
+
+        // Heartbeat checker
+        val heartbeatTimeout = 15_000L // 15 seconds
+        timer(period = heartbeatTimeout) {
+            val now = System.currentTimeMillis()
+            knownPeers.entries.removeIf { entry ->
+                now - entry.value.lastSeen > heartbeatTimeout
+            }
+            scope.launch(Dispatchers.Main) {
+                discoveredDevices = knownPeers.values.toList()
             }
         }
     }
@@ -162,24 +205,46 @@ fun updateChatLog(chatLogs: MutableMap<String, String>, ip: String, newMessage: 
 
 data class DiscoveredDevice(
     val ip: String,
-    val modelName: String
+    val modelName: String,
+    var lastSeen: Long = System.currentTimeMillis()
 )
 
-private fun sendMessage(message: String, serverIp: String, serverPort: Int) {
-    try {
-        Log.d("P2PChatApp", "Attempting to connect to $serverIp:$serverPort")
-        val socket = Socket(serverIp, serverPort)
-        Log.d("P2PChatApp", "Connected to $serverIp:$serverPort")
-        val writer = PrintWriter(socket.getOutputStream(), true)
-        writer.println(message)
-        writer.flush()  // Ensure the message is sent immediately
-        Log.d("P2PChatApp", "Message sent: $message")
-        socket.close()
-        Log.d("P2PChatApp", "Socket closed after sending message")
-    } catch (e: Exception) {
-        e.printStackTrace()
-        Log.e("P2PChatApp", "Error sending message: ${e.message}")
-    }
+data class ChatMessage(
+    val sender: String,
+    val content: String,
+    val isSentByUser: Boolean,
+    var status: String = "sent" // Default status is 'sent'
+)
+
+private fun sendMessage(message: String, serverIp: String, serverPort: Int, callback: (Boolean) -> Unit) {
+    Thread {
+        try {
+            Log.d("P2PChatApp", "Attempting to connect to $serverIp:$serverPort")
+            val socket = Socket(serverIp, serverPort)
+            Log.d("P2PChatApp", "Connected to $serverIp:$serverPort")
+            val writer = PrintWriter(socket.getOutputStream(), true)
+            writer.println(message)
+            writer.flush()  // Ensure the message is sent immediately
+
+            // Wait for acknowledgment
+            val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
+            socket.soTimeout = 5000  // Set a timeout for receiving acknowledgment (5 seconds)
+            val response = reader.readLine()
+            if (response == "ACK") {
+                Log.d("P2PChatApp", "Message acknowledged")
+                callback(true)
+            } else {
+                Log.d("P2PChatApp", "Message not acknowledged")
+                callback(false)
+            }
+            socket.close()
+            Log.d("P2PChatApp", "Socket closed after sending message")
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Log.e("P2PChatApp", "Error sending message: ${e.message}")
+            callback(false)
+        }
+    }.start()
 }
 
 private fun sendPing(serverIp: String, serverPort: Int) {
@@ -197,27 +262,49 @@ private fun sendPing(serverIp: String, serverPort: Int) {
     }
 }
 
-private fun startServer(port: Int, onMessageReceived: (String, String) -> Unit) {
-    try {
-        Log.d("P2PChatApp", "Starting server on port $port")
-        val serverSocket = ServerSocket(port)
-        while (true) {
-            val clientSocket = serverSocket.accept()
-            val clientIp = clientSocket.inetAddress.hostAddress
-            val reader = BufferedReader(InputStreamReader(clientSocket.getInputStream()))
-            val message = reader.readLine()
-            Log.d("P2PChatApp", "Received message from $clientIp: $message")
-            if (message != null) {
-                onMessageReceived(clientIp, message)
-            } else {
-                Log.d("P2PChatApp", "Received empty message")
+
+// private fun startServer(port: Int, onMessageReceived: (String, String) -> Unit) {
+//     try {
+//         Log.d("P2PChatApp", "Starting server on port $port")
+//         val serverSocket = ServerSocket(port)
+//         while (true) {
+//             val clientSocket = serverSocket.accept()
+//             val clientIp = clientSocket.inetAddress.hostAddress
+//             val reader = BufferedReader(InputStreamReader(clientSocket.getInputStream()))
+//             val message = reader.readLine()
+//             Log.d("P2PChatApp", "Received message from $clientIp: $message")
+//             if (message != null) {
+//                 onMessageReceived(clientIp, message)
+//             } else {
+//                 Log.d("P2PChatApp", "Received empty message")
+
+private fun startServer(port: Int, onMessageReceived: (String) -> Unit) {
+    Thread {
+        try {
+            Log.d("P2PChatApp", "Starting server on port $port")
+            val serverSocket = ServerSocket(port)
+            while (true) {
+                val clientSocket = serverSocket.accept()
+                val reader = BufferedReader(InputStreamReader(clientSocket.getInputStream()))
+                val message = reader.readLine()
+                Log.d("P2PChatApp", "Received message: $message")
+                if (message != null) {
+                    onMessageReceived(message)
+                    // Send acknowledgment
+                    val writer = PrintWriter(clientSocket.getOutputStream(), true)
+                    writer.println("ACK")
+                    writer.flush()
+                } else {
+                    Log.d("P2PChatApp", "Received empty message")
+                }
+                clientSocket.close()
+
             }
-            clientSocket.close()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Log.e("P2PChatApp", "Error starting server: ${e.message}")
         }
-    } catch (e: Exception) {
-        e.printStackTrace()
-        Log.e("P2PChatApp", "Error starting server: ${e.message}")
-    }
+    }.start()
 }
 
 private fun broadcastIp(port: Int) {
@@ -251,14 +338,13 @@ private fun listenForBroadcasts(wifiManager: WifiManager, onDeviceDiscovered: (D
             val packet = DatagramPacket(buffer, buffer.size)
             socket.receive(packet)
             val message = String(packet.data, 0, packet.length)
-            if (message.startsWith("DISCOVER:")) {
-                val data = message.substringAfter("DISCOVER:").split(":")
-                val ip = data[0]
-                val modelName = data[1]
-                if (ip != localIpAddress) {
-                    val device = DiscoveredDevice(ip, modelName)
-                    onDeviceDiscovered(device)
-                }
+            if (message.startsWith("DISCOVER:") && !message.contains(localIpAddress)) {
+                val parts = message.split(":")
+                val ip = parts[1]
+                val modelName = parts[2]
+                val device = DiscoveredDevice(ip, modelName)
+                Log.d("P2PChatApp", "Discovered device: $device")
+                onDeviceDiscovered(device)
             }
         }
     } catch (e: Exception) {
@@ -268,31 +354,34 @@ private fun listenForBroadcasts(wifiManager: WifiManager, onDeviceDiscovered: (D
 }
 
 private fun getLocalIpAddress(): String? {
-    try {
+    return try {
         val interfaces = NetworkInterface.getNetworkInterfaces()
-        for (networkInterface in interfaces) {
+        while (interfaces.hasMoreElements()) {
+            val networkInterface = interfaces.nextElement()
             val addresses = networkInterface.inetAddresses
-            for (address in addresses) {
+            while (addresses.hasMoreElements()) {
+                val address = addresses.nextElement()
                 if (!address.isLoopbackAddress && address is Inet4Address) {
                     return address.hostAddress
                 }
             }
         }
+        null
     } catch (e: Exception) {
         e.printStackTrace()
         Log.e("P2PChatApp", "Error getting local IP address: ${e.message}")
+        null
     }
-    return null
 }
 
 private fun getDeviceModelName(): String {
-    return "${Build.MANUFACTURER} ${Build.MODEL}"
+    return Build.MODEL ?: "Unknown"
 }
 
 @Preview(showBackground = true)
 @Composable
 fun ChatScreenPreview() {
     P2PChatAppTheme {
-        ChatScreen(serverPort = 12345, wifiManager = null) // This IP is just for preview purposes
+        ChatScreen(serverPort = 12345, wifiManager = null)
     }
 }
