@@ -29,30 +29,9 @@ import android.content.SharedPreferences
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 
-
 private const val PREFS_NAME = "P2PChatAppPrefs"
 private const val OFFLINE_MESSAGES_KEY = "OfflineMessages"
 
-fun storeOfflineMessages(context: Context, messages: ConcurrentHashMap<String, MutableList<OfflineMessage>>) {
-    val sharedPreferences: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    val editor = sharedPreferences.edit()
-    val gson = Gson()
-    val json = gson.toJson(messages)
-    editor.putString(OFFLINE_MESSAGES_KEY, json)
-    editor.apply()
-}
-
-fun retrieveOfflineMessages(context: Context): ConcurrentHashMap<String, MutableList<OfflineMessage>> {
-    val sharedPreferences: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    val gson = Gson()
-    val json = sharedPreferences.getString(OFFLINE_MESSAGES_KEY, null)
-    val type = object : TypeToken<ConcurrentHashMap<String, MutableList<OfflineMessage>>>() {}.type
-    return if (json != null) {
-        gson.fromJson(json, type)
-    } else {
-        ConcurrentHashMap()
-    }
-}
 
 class MainActivity : ComponentActivity() {
     private val serverPort = 12345
@@ -243,7 +222,6 @@ data class OfflineMessage(
 )
 
 val offlineMessages = ConcurrentHashMap<String, MutableList<OfflineMessage>>()
-val trustedPeers = ConcurrentHashMap<String, DiscoveredDevice>()
 
 private fun sendMessage(message: String, serverIp: String, serverPort: Int, callback: (Boolean) -> Unit) {
     val timestamp = System.currentTimeMillis()
@@ -393,14 +371,24 @@ private fun getDeviceModelName(): String {
     return Build.MODEL ?: "Unknown"
 }
 
-fun markAsTrustedPeer(device: DiscoveredDevice) {
-    trustedPeers[device.ip] = device
+fun storeOfflineMessages(context: Context, messages: ConcurrentHashMap<String, MutableList<OfflineMessage>>) {
+    val sharedPreferences: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    val editor = sharedPreferences.edit()
+    val gson = Gson()
+    val json = gson.toJson(messages)
+    editor.putString(OFFLINE_MESSAGES_KEY, json)
+    editor.apply()
 }
 
-fun storeMessageForTrustedPeer(message: OfflineMessage, peerIp: String) {
-    trustedPeers[peerIp]?.let { trustedPeer ->
-        offlineMessages.computeIfAbsent(trustedPeer.ip) { mutableListOf() }
-            .add(message)
+fun retrieveOfflineMessages(context: Context): ConcurrentHashMap<String, MutableList<OfflineMessage>> {
+    val sharedPreferences: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    val gson = Gson()
+    val json = sharedPreferences.getString(OFFLINE_MESSAGES_KEY, null)
+    val type = object : TypeToken<ConcurrentHashMap<String, MutableList<OfflineMessage>>>() {}.type
+    return if (json != null) {
+        gson.fromJson(json, type)
+    } else {
+        ConcurrentHashMap()
     }
 }
 
