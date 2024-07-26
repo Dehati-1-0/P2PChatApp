@@ -24,14 +24,46 @@ import java.io.PrintWriter
 import java.net.*
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.concurrent.timer
+import android.content.Context
+import android.content.SharedPreferences
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
+
+
+private const val PREFS_NAME = "P2PChatAppPrefs"
+private const val OFFLINE_MESSAGES_KEY = "OfflineMessages"
+
+fun storeOfflineMessages(context: Context, messages: ConcurrentHashMap<String, MutableList<OfflineMessage>>) {
+    val sharedPreferences: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    val editor = sharedPreferences.edit()
+    val gson = Gson()
+    val json = gson.toJson(messages)
+    editor.putString(OFFLINE_MESSAGES_KEY, json)
+    editor.apply()
+}
+
+fun retrieveOfflineMessages(context: Context): ConcurrentHashMap<String, MutableList<OfflineMessage>> {
+    val sharedPreferences: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    val gson = Gson()
+    val json = sharedPreferences.getString(OFFLINE_MESSAGES_KEY, null)
+    val type = object : TypeToken<ConcurrentHashMap<String, MutableList<OfflineMessage>>>() {}.type
+    return if (json != null) {
+        gson.fromJson(json, type)
+    } else {
+        ConcurrentHashMap()
+    }
+}
 
 class MainActivity : ComponentActivity() {
     private val serverPort = 12345
     private lateinit var wifiManager: WifiManager
+    private lateinit var offlineMessages: ConcurrentHashMap<String, MutableList<OfflineMessage>>
 
+    @SuppressLint("MissingPermission")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         wifiManager = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
+        offlineMessages = retrieveOfflineMessages(this)
         enableEdgeToEdge()
         setContent {
             P2PChatAppTheme {
@@ -44,6 +76,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        storeOfflineMessages(this, offlineMessages)
     }
 }
 
@@ -99,15 +136,6 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
             }
         }
 
-        //Here is the discover button which is not needed anymore
-//        Spacer(modifier = Modifier.height(8.dp))
-//        Button(onClick = {
-//            discoveredDevices = knownPeers.values.toList()
-//        }) {
-//            Text("Discover")
-//        }
-
-
         Spacer(modifier = Modifier.height(16.dp))
         Text("Discovered Devices:", style = MaterialTheme.typography.bodySmall)
         Column {
@@ -139,10 +167,21 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
                     "failed" -> "✗"
                     else -> ""
                 }
-                Text(
-                    text = "${chatMessage.sender}: ${chatMessage.content} $status",
-                    color = if (chatMessage.isSentByUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
-                )
+                val timestamp = java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date(chatMessage.timestamp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = if (chatMessage.isSentByUser) "${chatMessage.sender}: ${chatMessage.content} $status" else "${chatMessage.sender}: ${chatMessage.content}",
+                        color = if (chatMessage.isSentByUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
+                    )
+                    Text(
+                        text = timestamp,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
         }
     }
@@ -193,36 +232,42 @@ data class ChatMessage(
     val sender: String,
     val content: String,
     val isSentByUser: Boolean,
-    var status: String = "sent" // Default status is 'sent'
+    var status: String = "sent", // Default status is 'sent'
+    val timestamp: Long = System.currentTimeMillis() // Add timestamp
 )
 
+data class OfflineMessage(
+    val sender: String,
+    val content: String,
+    val timestamp: Long
+)
+
+val offlineMessages = ConcurrentHashMap<String, MutableList<OfflineMessage>>()
+val trustedPeers = ConcurrentHashMap<String, DiscoveredDevice>()
+
 private fun sendMessage(message: String, serverIp: String, serverPort: Int, callback: (Boolean) -> Unit) {
+    val timestamp = System.currentTimeMillis()
     Thread {
         try {
-            Log.d("P2PChatApp", "Attempting to connect to $serverIp:$serverPort")
             val socket = Socket(serverIp, serverPort)
-            Log.d("P2PChatApp", "Connected to $serverIp:$serverPort")
             val writer = PrintWriter(socket.getOutputStream(), true)
             writer.println(message)
-            writer.flush()  // Ensure the message is sent immediately
+            writer.flush()
 
-            // Wait for acknowledgment
             val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
-            socket.soTimeout = 5000  // Set a timeout for receiving acknowledgment (5 seconds)
+            socket.soTimeout = 5000
             val response = reader.readLine()
             if (response == "ACK") {
-                Log.d("P2PChatApp", "Message acknowledged")
-                callback(true)
+                callback(true) // Message delivered successfully
             } else {
-                Log.d("P2PChatApp", "Message not acknowledged")
-                callback(false)
+                callback(false) // Message delivery failed
             }
             socket.close()
-            Log.d("P2PChatApp", "Socket closed after sending message")
         } catch (e: Exception) {
-            e.printStackTrace()
-            Log.e("P2PChatApp", "Error sending message: ${e.message}")
-            callback(false)
+            // Store message for offline peer
+            offlineMessages.computeIfAbsent(serverIp) { mutableListOf() }
+                .add(OfflineMessage("You", message, timestamp))
+            callback(false) // Message delivery failed
         }
     }.start()
 }
@@ -245,23 +290,30 @@ private fun sendPing(serverIp: String, serverPort: Int) {
 private fun startServer(port: Int, onMessageReceived: (String) -> Unit) {
     Thread {
         try {
-            Log.d("P2PChatApp", "Starting server on port $port")
             val serverSocket = ServerSocket(port)
             while (true) {
                 val clientSocket = serverSocket.accept()
+                val clientIp = clientSocket.inetAddress.hostAddress
                 val reader = BufferedReader(InputStreamReader(clientSocket.getInputStream()))
                 val message = reader.readLine()
-                Log.d("P2PChatApp", "Received message: $message")
                 if (message != null) {
                     onMessageReceived(message)
-                    // Send acknowledgment
                     val writer = PrintWriter(clientSocket.getOutputStream(), true)
                     writer.println("ACK")
                     writer.flush()
-                } else {
-                    Log.d("P2PChatApp", "Received empty message")
                 }
                 clientSocket.close()
+
+                // Deliver stored messages in order of their timestamp
+                offlineMessages[clientIp]?.let { messages ->
+                    messages.sortedBy { it.timestamp }.forEach { offlineMessage ->
+                        sendMessage(offlineMessage.content, clientIp, port) { success ->
+                            if (success) {
+                                messages.remove(offlineMessage)
+                            }
+                        }
+                    }
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -339,6 +391,17 @@ private fun getLocalIpAddress(): String? {
 
 private fun getDeviceModelName(): String {
     return Build.MODEL ?: "Unknown"
+}
+
+fun markAsTrustedPeer(device: DiscoveredDevice) {
+    trustedPeers[device.ip] = device
+}
+
+fun storeMessageForTrustedPeer(message: OfflineMessage, peerIp: String) {
+    trustedPeers[peerIp]?.let { trustedPeer ->
+        offlineMessages.computeIfAbsent(trustedPeer.ip) { mutableListOf() }
+            .add(message)
+    }
 }
 
 @Preview(showBackground = true)
