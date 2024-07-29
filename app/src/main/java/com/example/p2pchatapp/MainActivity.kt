@@ -1,5 +1,6 @@
 package com.example.p2pchatapp
 
+import android.annotation.SuppressLint
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
@@ -23,14 +24,25 @@ import java.io.PrintWriter
 import java.net.*
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.concurrent.timer
+import android.content.Context
+import android.content.SharedPreferences
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
+
+private const val PREFS_NAME = "P2PChatAppPrefs"
+private const val OFFLINE_MESSAGES_KEY = "OfflineMessages"
+
 
 class MainActivity : ComponentActivity() {
     private val serverPort = 12345
     private lateinit var wifiManager: WifiManager
+    private lateinit var offlineMessages: ConcurrentHashMap<String, MutableList<OfflineMessage>>
 
+    @SuppressLint("MissingPermission")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         wifiManager = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
+        offlineMessages = retrieveOfflineMessages(this)
         enableEdgeToEdge()
         setContent {
             P2PChatAppTheme {
@@ -44,8 +56,14 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onPause() {
+        super.onPause()
+        storeOfflineMessages(this, offlineMessages)
+    }
 }
 
+@SuppressLint("MutableCollectionMutableState")
 @Composable
 fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = Modifier) {
     var message by remember { mutableStateOf("") }
@@ -72,10 +90,13 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
                 selectedDevice?.let { device ->
                     if (currentMessage.isNotEmpty()) {
                         scope.launch(Dispatchers.IO) {
-                            sendMessage(currentMessage, device.ip, serverPort)
+                            val chatMessage = ChatMessage("You", currentMessage, true, "sent")
+                            chatLog.add(chatMessage)
                             launch(Dispatchers.Main) {
-                                chatLog.add(ChatMessage("You", currentMessage, true))
                                 message = "" // Clear the message input after ensuring it's sent
+                            }
+                            sendMessage(currentMessage, device.ip, serverPort) { success ->
+                                chatMessage.status = if (success) "delivered" else "failed"
                             }
                         }
                     }
@@ -93,12 +114,7 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
                 Text("Ping")
             }
         }
-        Spacer(modifier = Modifier.height(8.dp))
-        Button(onClick = {
-            discoveredDevices = knownPeers.values.toList()
-        }) {
-            Text("Discover")
-        }
+
         Spacer(modifier = Modifier.height(16.dp))
         Text("Discovered Devices:", style = MaterialTheme.typography.bodySmall)
         Column {
@@ -124,15 +140,25 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
             .fillMaxHeight()
             .padding(16.dp)) {
             chatLog.forEach { chatMessage ->
-                if (chatMessage.isSentByUser) {
+                val status = when (chatMessage.status) {
+                    "sent" -> "✓"
+                    "delivered" -> "✓✓"
+                    "failed" -> "✗"
+                    else -> ""
+                }
+                val timestamp = java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date(chatMessage.timestamp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
                     Text(
-                        text = "${chatMessage.sender}: ${chatMessage.content}",
-                        color = MaterialTheme.colorScheme.primary
+                        text = if (chatMessage.isSentByUser) "${chatMessage.sender}: ${chatMessage.content} $status" else "${chatMessage.sender}: ${chatMessage.content}",
+                        color = if (chatMessage.isSentByUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
                     )
-                } else {
                     Text(
-                        text = "${chatMessage.sender}: ${chatMessage.content}",
-                        color = MaterialTheme.colorScheme.secondary
+                        text = timestamp,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
             }
@@ -184,24 +210,44 @@ data class DiscoveredDevice(
 data class ChatMessage(
     val sender: String,
     val content: String,
-    val isSentByUser: Boolean
+    val isSentByUser: Boolean,
+    var status: String = "sent", // Default status is 'sent'
+    val timestamp: Long = System.currentTimeMillis() // Add timestamp
 )
 
-private fun sendMessage(message: String, serverIp: String, serverPort: Int) {
-    try {
-        Log.d("P2PChatApp", "Attempting to connect to $serverIp:$serverPort")
-        val socket = Socket(serverIp, serverPort)
-        Log.d("P2PChatApp", "Connected to $serverIp:$serverPort")
-        val writer = PrintWriter(socket.getOutputStream(), true)
-        writer.println(message)
-        writer.flush()  // Ensure the message is sent immediately
-        Log.d("P2PChatApp", "Message sent: $message")
-        socket.close()
-        Log.d("P2PChatApp", "Socket closed after sending message")
-    } catch (e: Exception) {
-        e.printStackTrace()
-        Log.e("P2PChatApp", "Error sending message: ${e.message}")
-    }
+data class OfflineMessage(
+    val sender: String,
+    val content: String,
+    val timestamp: Long
+)
+
+val offlineMessages = ConcurrentHashMap<String, MutableList<OfflineMessage>>()
+
+private fun sendMessage(message: String, serverIp: String, serverPort: Int, callback: (Boolean) -> Unit) {
+    val timestamp = System.currentTimeMillis()
+    Thread {
+        try {
+            val socket = Socket(serverIp, serverPort)
+            val writer = PrintWriter(socket.getOutputStream(), true)
+            writer.println(message)
+            writer.flush()
+
+            val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
+            socket.soTimeout = 5000
+            val response = reader.readLine()
+            if (response == "ACK") {
+                callback(true) // Message delivered successfully
+            } else {
+                callback(false) // Message delivery failed
+            }
+            socket.close()
+        } catch (e: Exception) {
+            // Store message for offline peer
+            offlineMessages.computeIfAbsent(serverIp) { mutableListOf() }
+                .add(OfflineMessage("You", message, timestamp))
+            callback(false) // Message delivery failed
+        }
+    }.start()
 }
 
 private fun sendPing(serverIp: String, serverPort: Int) {
@@ -220,25 +266,38 @@ private fun sendPing(serverIp: String, serverPort: Int) {
 }
 
 private fun startServer(port: Int, onMessageReceived: (String) -> Unit) {
-    try {
-        Log.d("P2PChatApp", "Starting server on port $port")
-        val serverSocket = ServerSocket(port)
-        while (true) {
-            val clientSocket = serverSocket.accept()
-            val reader = BufferedReader(InputStreamReader(clientSocket.getInputStream()))
-            val message = reader.readLine()
-            Log.d("P2PChatApp", "Received message: $message")
-            if (message != null) {
-                onMessageReceived(message)
-            } else {
-                Log.d("P2PChatApp", "Received empty message")
+    Thread {
+        try {
+            val serverSocket = ServerSocket(port)
+            while (true) {
+                val clientSocket = serverSocket.accept()
+                val clientIp = clientSocket.inetAddress.hostAddress
+                val reader = BufferedReader(InputStreamReader(clientSocket.getInputStream()))
+                val message = reader.readLine()
+                if (message != null) {
+                    onMessageReceived(message)
+                    val writer = PrintWriter(clientSocket.getOutputStream(), true)
+                    writer.println("ACK")
+                    writer.flush()
+                }
+                clientSocket.close()
+
+                // Deliver stored messages in order of their timestamp
+                offlineMessages[clientIp]?.let { messages ->
+                    messages.sortedBy { it.timestamp }.forEach { offlineMessage ->
+                        sendMessage(offlineMessage.content, clientIp, port) { success ->
+                            if (success) {
+                                messages.remove(offlineMessage)
+                            }
+                        }
+                    }
+                }
             }
-            clientSocket.close()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Log.e("P2PChatApp", "Error starting server: ${e.message}")
         }
-    } catch (e: Exception) {
-        e.printStackTrace()
-        Log.e("P2PChatApp", "Error starting server: ${e.message}")
-    }
+    }.start()
 }
 
 private fun broadcastIp(port: Int) {
@@ -310,6 +369,27 @@ private fun getLocalIpAddress(): String? {
 
 private fun getDeviceModelName(): String {
     return Build.MODEL ?: "Unknown"
+}
+
+fun storeOfflineMessages(context: Context, messages: ConcurrentHashMap<String, MutableList<OfflineMessage>>) {
+    val sharedPreferences: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    val editor = sharedPreferences.edit()
+    val gson = Gson()
+    val json = gson.toJson(messages)
+    editor.putString(OFFLINE_MESSAGES_KEY, json)
+    editor.apply()
+}
+
+fun retrieveOfflineMessages(context: Context): ConcurrentHashMap<String, MutableList<OfflineMessage>> {
+    val sharedPreferences: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    val gson = Gson()
+    val json = sharedPreferences.getString(OFFLINE_MESSAGES_KEY, null)
+    val type = object : TypeToken<ConcurrentHashMap<String, MutableList<OfflineMessage>>>() {}.type
+    return if (json != null) {
+        gson.fromJson(json, type)
+    } else {
+        ConcurrentHashMap()
+    }
 }
 
 @Preview(showBackground = true)
