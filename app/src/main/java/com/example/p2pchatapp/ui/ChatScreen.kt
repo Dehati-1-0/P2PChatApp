@@ -3,9 +3,12 @@ package com.example.p2pchatapp.ui
 import android.net.wifi.WifiManager
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.p2pchatapp.model.ChatMessage
@@ -30,8 +33,13 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
     var selectedDevice by remember { mutableStateOf<DiscoveredDevice?>(null) }
     var sequenceNumber by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
+    val scrollState = rememberScrollState()
 
-    Column(modifier = modifier.padding(30.dp)) {
+    Column(
+        modifier = modifier
+            .padding(30.dp)
+            .imePadding() // Ensure content is not hidden by the keyboard
+    ) {
         Spacer(modifier = Modifier.height(8.dp))  // Add more space before the TextField
         TextField(
             value = message,
@@ -50,14 +58,16 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
                     if (currentMessage.isNotEmpty()) {
                         scope.launch(Dispatchers.IO) {
                             val chatMessage = ChatMessage("You", currentMessage, true, "sent")
-                            chatLog.add(chatMessage)
                             launch(Dispatchers.Main) {
-                                message = "" // Clear the message input after ensuring it's sent
+                                chatLog.add(chatMessage)
+                                message = ""
+                                scrollState.animateScrollTo(scrollState.maxValue)
                             }
                             sendMessage(currentMessage, device.ip, serverPort, sequenceNumber++) { status ->
                                 chatMessage.status = status
                                 launch(Dispatchers.Main) {
                                     chatLog = chatLog.toMutableList() // Trigger recomposition
+                                    scrollState.animateScrollTo(scrollState.maxValue)
                                 }
                             }
                         }
@@ -98,9 +108,12 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
             }
         }
         Spacer(modifier = Modifier.height(16.dp))
-        Column(modifier = Modifier
-            .fillMaxHeight()
-            .padding(16.dp)) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(16.dp)
+                .verticalScroll(scrollState)
+        ) {
             chatLog.forEach { chatMessage ->
                 val status = when (chatMessage.status) {
                     "sent" -> "✓"
@@ -133,16 +146,23 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
         }
     }
 
+    LaunchedEffect(chatLog.size) {
+        scrollState.animateScrollTo(scrollState.maxValue)
+    }
+
     LaunchedEffect(Unit) {
         scope.launch(Dispatchers.IO) {
             startServer(serverPort, { newMessage, senderIp ->
                 scope.launch {
                     chatLog.add(ChatMessage(senderIp, newMessage, false))
+                    chatLog = chatLog.toMutableList() // Trigger recomposition
+                    scrollState.animateScrollTo(scrollState.maxValue)
                 }
             }, { seenMessage ->
                 scope.launch {
                     chatLog.find { it.content == seenMessage }?.status = "seen"
                     chatLog = chatLog.toMutableList() // Trigger recomposition
+                    scrollState.animateScrollTo(scrollState.maxValue)
                 }
             })
         }

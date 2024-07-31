@@ -8,12 +8,12 @@
           <targets>
             <Target type="DEFAULT_BOOT">
               <handle>
-                <DeviceId pluginId="PhysicalDevice" identifier="serial=R58R35VD3PW" />
+                <DeviceId pluginId="PhysicalDevice" identifier="serial=RF8M21NMEZE" />
               </handle>
             </Target>
             <Target type="DEFAULT_BOOT">
               <handle>
-                <DeviceId pluginId="PhysicalDevice" identifier="serial=RF8M21NMEZE" />
+                <DeviceId pluginId="PhysicalDevice" identifier="serial=R58R35VD3PW" />
               </handle>
             </Target>
             <Target type="DEFAULT_BOOT">
