@@ -14,8 +14,7 @@ import java.net.*
 
 private const val BROADCAST_INTERVAL = 5000L // 5 seconds
 
-fun sendMessage(message: String, serverIp: String, serverPort: Int, callback: (Boolean) -> Unit) {
-    val timestamp = System.currentTimeMillis()
+fun sendMessage(message: String, serverIp: String, serverPort: Int, sequenceNumber: Int, callback: (String) -> Unit) {
     Thread {
         try {
             val socket = Socket(serverIp, serverPort)
@@ -27,16 +26,16 @@ fun sendMessage(message: String, serverIp: String, serverPort: Int, callback: (B
             socket.soTimeout = 5000
             val response = reader.readLine()
             if (response == "ACK") {
-                callback(true) // Message delivered successfully
+                callback("delivered") // Message delivered successfully
             } else {
-                callback(false) // Message delivery failed
+                callback("failed") // Message delivery failed
             }
             socket.close()
         } catch (e: Exception) {
             // Store message for offline peer
             offlineMessages.computeIfAbsent(serverIp) { mutableListOf() }
-                .add(OfflineMessage("You", message, timestamp))
-            callback(false) // Message delivery failed
+                .add(OfflineMessage("You", message, sequenceNumber))
+            callback("failed") // Message delivery failed
         }
     }.start()
 }
@@ -56,7 +55,7 @@ fun sendPing(serverIp: String, serverPort: Int) {
     }
 }
 
-fun startServer(port: Int, onMessageReceived: (String) -> Unit) {
+fun startServer(port: Int, onMessageReceived: (String, String) -> Unit, onMessageSeen: (String) -> Unit) {
     Thread {
         try {
             val serverSocket = ServerSocket(port)
@@ -66,18 +65,18 @@ fun startServer(port: Int, onMessageReceived: (String) -> Unit) {
                 val reader = BufferedReader(InputStreamReader(clientSocket.getInputStream()))
                 val message = reader.readLine()
                 if (message != null) {
-                    onMessageReceived(message)
+                    onMessageReceived(message, clientIp)
                     val writer = PrintWriter(clientSocket.getOutputStream(), true)
                     writer.println("ACK")
                     writer.flush()
                 }
                 clientSocket.close()
 
-                // Deliver stored messages in order of their timestamp
+                // Deliver stored messages in order of their sequence number
                 offlineMessages[clientIp]?.let { messages ->
-                    messages.sortedBy { it.timestamp }.forEach { offlineMessage ->
-                        sendMessage(offlineMessage.content, clientIp, port) { success ->
-                            if (success) {
+                    messages.sortedBy { it.sequenceNumber }.forEach { offlineMessage ->
+                        sendMessage(offlineMessage.content, clientIp, port, offlineMessage.sequenceNumber) { status ->
+                            if (status == "delivered") {
                                 messages.remove(offlineMessage)
                             }
                         }

@@ -28,6 +28,7 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
     var knownPeers by remember { mutableStateOf(ConcurrentHashMap<String, DiscoveredDevice>()) }
     var discoveredDevices by remember { mutableStateOf(listOf<DiscoveredDevice>()) }
     var selectedDevice by remember { mutableStateOf<DiscoveredDevice?>(null) }
+    var sequenceNumber by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
 
     Column(modifier = modifier.padding(30.dp)) {
@@ -53,8 +54,11 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
                             launch(Dispatchers.Main) {
                                 message = "" // Clear the message input after ensuring it's sent
                             }
-                            sendMessage(currentMessage, device.ip, serverPort) { success ->
-                                chatMessage.status = if (success) "delivered" else "failed"
+                            sendMessage(currentMessage, device.ip, serverPort, sequenceNumber++) { status ->
+                                chatMessage.status = status
+                                launch(Dispatchers.Main) {
+                                    chatLog = chatLog.toMutableList() // Trigger recomposition
+                                }
                             }
                         }
                     }
@@ -101,21 +105,27 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
                 val status = when (chatMessage.status) {
                     "sent" -> "✓"
                     "delivered" -> "✓✓"
+                    "seen" -> "✓✓"
                     "failed" -> "✗"
                     else -> ""
+                }
+                val statusColor = when (chatMessage.status) {
+                    "seen" -> MaterialTheme.colorScheme.primary
+                    else -> MaterialTheme.colorScheme.onBackground
                 }
                 val timestamp = java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date(chatMessage.timestamp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
+                    val senderName = if (chatMessage.isSentByUser) "You" else knownPeers[chatMessage.sender]?.modelName ?: chatMessage.sender
                     Text(
-                        text = if (chatMessage.isSentByUser) "${chatMessage.sender}: ${chatMessage.content} $status" else "${chatMessage.sender}: ${chatMessage.content}",
+                        text = if (chatMessage.isSentByUser) "$senderName: ${chatMessage.content} $status" else "$senderName: ${chatMessage.content}",
                         color = if (chatMessage.isSentByUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
                     )
                     Text(
                         text = timestamp,
-                        color = MaterialTheme.colorScheme.onBackground,
+                        color = statusColor,
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -125,11 +135,16 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
 
     LaunchedEffect(Unit) {
         scope.launch(Dispatchers.IO) {
-            startServer(serverPort) { newMessage ->
+            startServer(serverPort, { newMessage, senderIp ->
                 scope.launch {
-                    chatLog.add(ChatMessage("Friend", newMessage, false))
+                    chatLog.add(ChatMessage(senderIp, newMessage, false))
                 }
-            }
+            }, { seenMessage ->
+                scope.launch {
+                    chatLog.find { it.content == seenMessage }?.status = "seen"
+                    chatLog = chatLog.toMutableList() // Trigger recomposition
+                }
+            })
         }
         scope.launch(Dispatchers.IO) {
             broadcastIp(serverPort)
@@ -158,6 +173,8 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
         }
     }
 }
+
+
 
 @Preview(showBackground = true)
 @Composable

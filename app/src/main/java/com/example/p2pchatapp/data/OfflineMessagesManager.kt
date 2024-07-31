@@ -20,8 +20,7 @@ fun storeOfflineMessages(context: Context, messages: ConcurrentHashMap<String, M
 }
 
 fun retrieveOfflineMessages(context: Context): ConcurrentHashMap<String, MutableList<OfflineMessage>> {
-    val sharedPreferences: SharedPreferences =
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    val sharedPreferences: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     val gson = Gson()
     val json = sharedPreferences.getString(OFFLINE_MESSAGES_KEY, null)
     val type = object : TypeToken<ConcurrentHashMap<String, MutableList<OfflineMessage>>>() {}.type
@@ -30,10 +29,8 @@ fun retrieveOfflineMessages(context: Context): ConcurrentHashMap<String, Mutable
     } else {
         ConcurrentHashMap()
     }
-
 }
 
-    object OfflineMessagesManager {
-        val offlineMessages = ConcurrentHashMap<String, MutableList<OfflineMessage>>()
-    }
-
+object OfflineMessagesManager {
+    val offlineMessages = ConcurrentHashMap<String, MutableList<OfflineMessage>>()
+}

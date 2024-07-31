@@ -17,5 +17,5 @@ data class ChatMessage(
 data class OfflineMessage(
     val sender: String,
     val content: String,
-    val timestamp: Long
+    val sequenceNumber: Int
 )
