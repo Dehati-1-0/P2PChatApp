@@ -22,7 +22,7 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.concurrent.timer
 
 @Composable
-fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = Modifier) {
+fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = Modifier, onNavigateToPrivateKey: () -> Unit) {
     var message by remember { mutableStateOf("") }
     var chatLog by remember { mutableStateOf(mutableListOf<ChatMessage>()) }
     var knownPeers by remember { mutableStateOf(ConcurrentHashMap<String, DiscoveredDevice>()) }
@@ -30,7 +30,13 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
     var selectedDevice by remember { mutableStateOf<DiscoveredDevice?>(null) }
     val scope = rememberCoroutineScope()
 
-    Column(modifier = modifier.padding(30.dp)) {
+    Column(modifier = modifier.padding(16.dp)) {
+        Button(onClick = onNavigateToPrivateKey) {
+            Text("Show Private Key")
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
         Spacer(modifier = Modifier.height(8.dp))  // Add more space before the TextField
         TextField(
             value = message,
@@ -163,6 +169,6 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
 @Composable
 fun ChatScreenPreview() {
     P2PChatAppTheme {
-        ChatScreen(serverPort = 12345, wifiManager = null)
+        ChatScreen(serverPort = 12345, wifiManager = null, onNavigateToPrivateKey = {})
     }
 }
