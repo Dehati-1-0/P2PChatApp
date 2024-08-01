@@ -1,12 +1,14 @@
 package com.example.p2pchatapp.ui
 
 import android.net.wifi.WifiManager
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.tooling.preview.Preview
@@ -24,20 +26,22 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.concurrent.timer
 
+import kotlinx.coroutines.delay
+
 @Composable
 fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = Modifier) {
     var message by remember { mutableStateOf("") }
     var chatLog by remember { mutableStateOf(mutableListOf<ChatMessage>()) }
     var knownPeers by remember { mutableStateOf(ConcurrentHashMap<String, DiscoveredDevice>()) }
     var discoveredDevices by remember { mutableStateOf(listOf<DiscoveredDevice>()) }
-    var selectedDevice by remember { mutableStateOf<DiscoveredDevice?>(null) }
+    var selectedDevice by rememberSaveable { mutableStateOf<DiscoveredDevice?>(null) }
     var sequenceNumber by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
 
     Column(
         modifier = modifier
-            .padding(30.dp)
+            .padding(35.dp)
             .imePadding() // Ensure content is not hidden by the keyboard
     ) {
         Spacer(modifier = Modifier.height(8.dp))  // Add more space before the TextField
@@ -97,13 +101,11 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
                         .clickable {
                             selectedDevice = device
                         }
-                        .padding(8.dp),
+                        .padding(8.dp)
+                        .background(if (device == selectedDevice) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.background),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text("${device.ip} - ${device.modelName}")
-                    if (device == selectedDevice) {
-                        Text(" (Selected)", color = MaterialTheme.colorScheme.primary)
-                    }
                 }
             }
         }
@@ -167,14 +169,19 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
             })
         }
         scope.launch(Dispatchers.IO) {
-            broadcastIp(serverPort)
+            while (true) {
+                broadcastIp(serverPort)
+                delay(5000) // Adjust the interval as needed
+            }
         }
         scope.launch(Dispatchers.IO) {
             if (wifiManager != null) {
-                listenForBroadcasts(wifiManager) { discoveredDevice ->
-                    knownPeers[discoveredDevice.ip] = discoveredDevice
-                    scope.launch(Dispatchers.Main) {
-                        discoveredDevices = knownPeers.values.toList()
+                while (true) {
+                    listenForBroadcasts(wifiManager) { discoveredDevice ->
+                        knownPeers[discoveredDevice.ip] = discoveredDevice
+                        scope.launch(Dispatchers.Main) {
+                            discoveredDevices = knownPeers.values.toList()
+                        }
                     }
                 }
             }
@@ -193,8 +200,6 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
         }
     }
 }
-
-
 
 @Preview(showBackground = true)
 @Composable
