@@ -10,6 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -125,8 +126,8 @@ fun ChatScreen(serverPort: Int, wifiManager: WifiManager?, modifier: Modifier = 
                     else -> ""
                 }
                 val statusColor = when (chatMessage.status) {
-                    "seen" -> MaterialTheme.colorScheme.primary
-                    else -> MaterialTheme.colorScheme.onBackground
+                    "seen" -> Color.Blue
+                    else -> Color.Gray
                 }
                 val timestamp = java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date(chatMessage.timestamp))
                 Row(
