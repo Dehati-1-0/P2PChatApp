@@ -90,23 +90,6 @@ fun startServer(port: Int, onMessageReceived: (String, String) -> Unit, onMessag
     }.start()
 }
 
-fun broadcastIp(port: Int) {
-    try {
-        val broadcastAddress = InetAddress.getByName("255.255.255.255")
-        val socket = DatagramSocket()
-        val localIpAddress = getLocalIpAddress() ?: return
-        val message = "DISCOVER:$localIpAddress:${getDeviceModelName()}"
-        val packet = DatagramPacket(message.toByteArray(), message.length, broadcastAddress, port)
-        while (true) {
-            socket.send(packet)
-            Thread.sleep(BROADCAST_INTERVAL)
-        }
-    } catch (e: Exception) {
-        e.printStackTrace()
-        Log.e("P2PChatApp", "Error broadcasting IP: ${e.message}")
-    }
-}
-
 fun listenForBroadcasts(wifiManager: WifiManager, onDeviceDiscovered: (DiscoveredDevice) -> Unit) {
     try {
         val socket = DatagramSocket(12345, InetAddress.getByName("0.0.0.0"))
@@ -121,17 +104,38 @@ fun listenForBroadcasts(wifiManager: WifiManager, onDeviceDiscovered: (Discovere
             val packet = DatagramPacket(buffer, buffer.size)
             socket.receive(packet)
             val message = String(packet.data, 0, packet.length)
-            if (message.startsWith("DISCOVER:") && !message.contains(localIpAddress)) {
+            if (message.startsWith("DISCOVER:")) {
                 val parts = message.split(":")
                 val ip = parts[1]
-                val modelName = parts[2]
-                val device = DiscoveredDevice(ip, modelName)
-                Log.d("P2PChatApp", "Discovered device: $device")
-                onDeviceDiscovered(device)
+                val modelName = parts.getOrNull(2) ?: "Unknown Device"
+                if (ip != localIpAddress) {
+                    val device = DiscoveredDevice(ip, modelName)
+                    Log.d("P2PChatApp", "Discovered device: $device")
+                    onDeviceDiscovered(device)
+                }
             }
         }
     } catch (e: Exception) {
         e.printStackTrace()
         Log.e("P2PChatApp", "Error listening for broadcasts: ${e.message}")
+    }
+}
+
+fun broadcastIp(port: Int) {
+    try {
+        val broadcastAddress = InetAddress.getByName("255.255.255.255")
+        val socket = DatagramSocket()
+        val localIpAddress = getLocalIpAddress() ?: return
+        val modelName = getDeviceModelName()
+        if (modelName == "Unknown Device") return // Do not broadcast if the device model name is unknown
+        val message = "DISCOVER:$localIpAddress:$modelName"
+        val packet = DatagramPacket(message.toByteArray(), message.length, broadcastAddress, port)
+        while (true) {
+            socket.send(packet)
+            Thread.sleep(BROADCAST_INTERVAL)
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+        Log.e("P2PChatApp", "Error broadcasting IP: ${e.message}")
     }
 }
